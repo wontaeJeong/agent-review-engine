@@ -1,0 +1,36 @@
+# Copy this workflow into each managed repository if the App's queue-branch
+# push webhook is not dependable on your GHES instance.
+# It does NOT checkout or execute untrusted pull request code.
+name: Agent Review Queue Bridge
+on:
+  merge_group:
+    types: [checks_requested]
+permissions:
+  contents: read
+jobs:
+  bridge:
+    name: notify-review-engine
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 3
+    steps:
+      - name: Submit queue SHA to centralized engine
+        env:
+          REVIEW_ENGINE_URL: ${{ vars.REVIEW_ENGINE_URL }}
+          REVIEW_ENGINE_BRIDGE_TOKEN: ${{ secrets.REVIEW_ENGINE_BRIDGE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$REVIEW_ENGINE_URL"
+          test -n "$REVIEW_ENGINE_BRIDGE_TOKEN"
+          # jq is available on the selected self-hosted runner.
+          jq -c '{repository:.repository.full_name,
+                  head_sha:.merge_group.head_sha,
+                  base_sha:.merge_group.base_sha,
+                  head_ref:.merge_group.head_ref,
+                  base_ref:.merge_group.base_ref}' \
+                  "$GITHUB_EVENT_PATH" > /tmp/merge-group-bridge.json
+          curl --fail-with-body --silent --show-error --retry 3 \
+            -H 'Content-Type: application/json' \
+            -H "X-Bridge-Token: $REVIEW_ENGINE_BRIDGE_TOKEN" \
+            --data-binary @/tmp/merge-group-bridge.json \
+            "${REVIEW_ENGINE_URL%/}/bridge/merge-group"

@@ -1,0 +1,32 @@
+# Illustration only. Keep actual test/build commands from each repository.
+# Important: do not register light-ci and heavy-ci as required *individually*
+# unless your protected-branch configuration provides them on BOTH event types.
+name: Repository CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+permissions:
+  contents: read
+jobs:
+  light-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fast validation
+        run: |
+          # Replace with repository-specific lint, type-check, unit tests.
+          echo "ERROR: replace placeholder with actual Light CI tests" >&2
+          exit 1
+  heavy-ci:
+    if: github.event_name == 'merge_group'
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Integration validation
+        run: |
+          # Replace with repository-specific integration / e2e / security tests.
+          echo "ERROR: replace placeholder with actual Heavy CI tests" >&2
+          exit 1

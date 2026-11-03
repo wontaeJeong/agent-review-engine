@@ -1,0 +1,141 @@
+# Reference only. Replace image, external secrets, GHES/LLM domains and resources.
+# Apply migration Job first, wait for completion, then apply Deployments/Service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-review-config
+  namespace: platform
+  labels: {app.kubernetes.io/name: agent-review-engine}
+data:
+  GITHUB_API_URL: https://github.internal/api/v3
+  GITHUB_APP_ID: "12345"
+  GITHUB_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+  GITHUB_BOT_LOGIN: agent-review-engine[bot]
+  REPOSITORY_ALLOWLIST: "platform/service-a,platform/service-b"
+  JEV_ENABLED: "false"
+  LLM_BASE_URL: https://litellm.internal/v1
+  LLM_MODEL: "replace-with-served-model"
+  LIGHT_CI_CHECKS: light-ci
+  HEAVY_CI_CHECKS: heavy-ci
+  CHECK_NAME: agent-review-gate
+  SCHEMA_AUTO_CREATE: "false"
+  WORKER_ENABLED: "false"
+  APPROVAL_MODE: report_only
+  AUTO_ENQUEUE: "false"
+---
+# Create Secret `agent-review-secrets` with:
+# DATABASE_URL, GITHUB_WEBHOOK_SECRET, LLM_API_KEY, ADMIN_METRICS_TOKEN,
+# optional BRIDGE_TOKEN, and key `github-app-private-key.pem` (file).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-review-migrate-v0001
+  namespace: platform
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: migrate
+          image: registry.internal/platform/agent-review-engine:0.2.0
+          command: [alembic, upgrade, head]
+          envFrom:
+            - configMapRef: {name: agent-review-config}
+            - secretRef: {name: agent-review-secrets}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-review-api
+  namespace: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: agent-review, component: api}
+  template:
+    metadata:
+      labels: {app: agent-review, component: api}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: registry.internal/platform/agent-review-engine:0.2.0
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8080, name: http}]
+          envFrom:
+            - configMapRef: {name: agent-review-config}
+            - secretRef: {name: agent-review-secrets}
+          volumeMounts:
+            - {name: github-key, mountPath: /run/secrets, readOnly: true}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 768Mi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+      volumes:
+        - name: github-key
+          secret:
+            secretName: agent-review-secrets
+            items:
+              - key: github-app-private-key.pem
+                path: github-app-private-key.pem
+                mode: 0440
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-review-worker
+  namespace: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: agent-review, component: worker}
+  template:
+    metadata:
+      labels: {app: agent-review, component: worker}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: worker
+          image: registry.internal/platform/agent-review-engine:0.2.0
+          command: [python, -m, agent_review_engine.worker]
+          envFrom:
+            - configMapRef: {name: agent-review-config}
+            - secretRef: {name: agent-review-secrets}
+          volumeMounts:
+            - {name: github-key, mountPath: /run/secrets, readOnly: true}
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}
+      volumes:
+        - name: github-key
+          secret:
+            secretName: agent-review-secrets
+            items:
+              - key: github-app-private-key.pem
+                path: github-app-private-key.pem
+                mode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-review-api
+  namespace: platform
+spec:
+  selector: {app: agent-review, component: api}
+  ports: [{name: http, port: 80, targetPort: http}]

@@ -1,0 +1,29 @@
+name: Tag MVP v0.1.0
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: contains(github.event.head_commit.message, 'release: MVP v0.1.0')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create immutable MVP tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify refs/tags/v0.1.0 >/dev/null; then
+            echo 'v0.1.0 already exists; refusing to retag'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a v0.1.0 "${GITHUB_SHA}" -m 'Agent Review Engine MVP v0.1.0'
+          git push origin refs/tags/v0.1.0

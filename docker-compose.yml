@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: review
+      POSTGRES_DB: review
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env}
+    volumes:
+      - review-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review -d review"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      SCHEMA_AUTO_CREATE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WORKER_ENABLED: "false"
+      SCHEMA_AUTO_CREATE: "false"
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ./secrets/github-app-private-key.pem:/run/secrets/github-app-private-key.pem:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [internal]
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "agent_review_engine.worker"]
+    env_file: .env
+    environment:
+      SCHEMA_AUTO_CREATE: "false"
+    volumes:
+      - ./secrets/github-app-private-key.pem:/run/secrets/github-app-private-key.pem:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [internal]
+volumes:
+  review-db:
+networks:
+  internal:
