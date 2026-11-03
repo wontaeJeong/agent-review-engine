@@ -1,0 +1,11 @@
+.env
+*.db
+*.sqlite*
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pem
+*.key
+*.egg-info/
+secrets/
