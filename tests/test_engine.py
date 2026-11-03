@@ -177,8 +177,6 @@ async def test_untrusted_label_does_not_override_classification_record(tmp_path)
 
 
 async def test_disabled_jev_uses_fallback_and_does_not_block_review(tmp_path):
-    from agent_review_engine.models import Labels
-
     class UnavailableJev:
         async def classify(self, **kwargs):
             raise AssertionError("Disabled Jev must not be invoked")
