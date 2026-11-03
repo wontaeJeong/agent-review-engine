@@ -69,7 +69,8 @@ class LLMReviewer:
         self.client = client
 
     async def review(self, *, title: str, description: str,
-                     files: list[dict], ci_summary: str, phase: str) -> tuple[ReviewVerdict, dict]:
+                     files: list[dict], ci_summary: str, phase: str,
+                     profile_name: str | None = None) -> tuple[ReviewVerdict, dict]:
         if not files:
             raise ValueError("No changed files; automatic review is not possible")
         patches: list[str] = []
@@ -85,16 +86,17 @@ class LLMReviewer:
         text = (f"Phase: {phase}\nTitle: {title[:500]}\nDescription: {description[:3500]}\n"
                 f"Verified CI: {ci_summary}\nChanged files: {len(files)}\nPatch (untrusted):\n"
                 f"<untrusted_diff>\n{diff}\n</untrusted_diff>")
+        provider = self.settings.resolve_llm_profile(profile_name)
         headers = {"Content-Type": "application/json"}
-        if self.settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+        if provider["api_key"]:
+            headers["Authorization"] = f"Bearer {provider['api_key']}"
         response = await self.client.post(
-            self.settings.llm_base_url.rstrip("/") + "/chat/completions",
+            str(provider["base_url"]).rstrip("/") + "/chat/completions",
             headers=headers,
-            json={"model": self.settings.llm_model, "temperature": 0, "max_tokens": 2048,
+            json={"model": provider["model"], "temperature": 0, "max_tokens": 2048,
                   "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                                {"role": "user", "content": text}]},
-            timeout=self.settings.llm_timeout_seconds,
+            timeout=provider["timeout_seconds"],
         )
         response.raise_for_status()
         result = response.json()

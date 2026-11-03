@@ -1,6 +1,6 @@
 [project]
 name = "agent-review-engine"
-version = "0.1.0"
+version = "0.2.0.dev0"
 description = "Central GitHub App review service: Jev labeling, LLM PR approvals, merge queue quality gate"
 requires-python = ">=3.12"
 dependencies = [
@@ -33,3 +33,6 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

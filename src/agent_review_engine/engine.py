@@ -8,7 +8,7 @@ import httpx
 from .config import Settings
 from .github import GitHubAPI
 from .models import JobSpec, ReviewVerdict
-from .policy import effective_risk, fallback_labels, allowed_to_approve, requires_human
+from .policy import fallback_labels, allowed_to_approve, requires_human
 from .providers import JevClassifier, LLMReviewer
 from .store import Store
 
@@ -145,7 +145,9 @@ class ReviewEngine:
             try:
                 verdict, usage = await self.reviewer.review(
                     title=pr.get("title", ""), description=pr.get("body") or "",
-                    files=files, ci_summary=state["ci_summary"], phase="pr")
+                    files=files, ci_summary=state["ci_summary"], phase="pr",
+                    **({"profile_name": repo_settings["llm_profile"]} if repo_settings.get("llm_profile") else {}))
+                state["llm_profile"] = repo_settings.get("llm_profile") or "default"
                 state["verdict"] = verdict.model_dump()
                 state["usage"] = usage
             except (ValueError, KeyError) as exc:
@@ -258,9 +260,12 @@ class ReviewEngine:
         if "verdict" not in state:
             try:
                 files = await self.github.compare_files(iid, repo, base, spec.sha)
+                repo_settings = self.store.repo_settings(repo)
                 verdict, usage = await self.reviewer.review(
                     title="Merge Queue integration validation", description=f"Base {base} to {spec.sha}",
-                    files=files, ci_summary=state["ci_summary"], phase="merge_group")
+                    files=files, ci_summary=state["ci_summary"], phase="merge_group",
+                    **({"profile_name": repo_settings["llm_profile"]} if repo_settings.get("llm_profile") else {}))
+                state["llm_profile"] = repo_settings.get("llm_profile") or "default"
                 state["verdict"] = verdict.model_dump()
                 state["usage"] = usage
             except (ValueError, KeyError) as exc:
