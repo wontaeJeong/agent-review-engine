@@ -129,6 +129,30 @@ curl -X POST https://review.internal/admin/recheck \
 
 Jev's risk label is `jev:risk-*`, deliberately separate from the centrally enforced `risk:*` label. The Jev advisory cannot override hard security policy. If the optional classifier is unavailable, `review:jev-degraded` is added for visibility.
 
+### Production hardening branch (`feat/production-hardening`)
+
+This branch adds capabilities **beyond the tagged MVP**:
+
+- Per-repository LLM model selection through **server-provisioned profiles**. `LLM_PROFILES_JSON` stores endpoint/model and a secret **environment variable name**; it never accepts inline API keys or arbitrary URLs from PR text. Optionally restrict model destinations with `LLM_ALLOWED_HOSTS`.
+- Durable, append-only audit records for final review decisions and repository policy edits (`audit_events`), without storing diffs, model prompts or raw CI text. Decision evidence is tied to repository and SHA.
+- Authenticated `GET /admin/audit` and `GET /admin/metrics?days=7|30|90` APIs, including verdict distribution and input/output token usage.
+- Database migration `0002_audit_profiles`. Apply `alembic upgrade head` **before** deploying the advanced branch to an existing MVP database.
+- New profile, secret-isolation and audit tests, plus an explicit CI lint rule set.
+
+Example server environment and per-repo selection:
+
+```bash
+export FAST_REVIEW_KEY="$(cat /run/secrets/fast-llm-key)"
+export LLM_PROFILES_JSON='{"fast":{"base_url":"https://vllm.internal/v1","model":"review-small","api_key_env":"FAST_REVIEW_KEY"}}'
+export LLM_ALLOWED_HOSTS='litellm.internal,vllm.internal'
+
+curl -X PATCH https://review.internal/admin/repos/org/repo \
+  -H "X-Admin-Token: $ADMIN_METRICS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"llm_profile":"fast","jev_enabled":false}'
+```
+
+Settings are server-owned, not controlled by PR authors. The `default` profile continues to use existing `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` for backward compatibility. Admin token authentication is still an MVP limitation; deploy behind SSO-aware ingress and plan per-role auth before team-wide production.
+
 ### Turn on actual approval / optional auto-queue
 
 `APPROVAL_MODE=report_only` initially produces blocking `action_required` checks and **no GitHub APPROVE**. Do not make `agent-review-gate` required during a shadow pilot, or the pilot will block merges. To activate after a GHES pilot:

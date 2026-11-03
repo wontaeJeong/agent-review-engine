@@ -20,3 +20,7 @@ The source package is an executable pilot scaffold. It does **not** claim produc
 ## Recommended next milestone
 
 Build an operator UI with persisted immutable review evidence, safe provider profiles (`base_url`, `model`, secret reference separated), per-repo guardrail configuration, real-time health alerts, authorized human exception workflow, and a GHES-in-the-loop test harness. Expand beyond pilot only after measured false-approval rates satisfy your service-level policy.
+
+## Progress in feature/production-hardening
+
+The feature branch addresses part of MVP items 9/10: a DB-backed audit trail, token metrics, and server-defined per-repository model profiles with allowlisted hosts. These are incremental safety features, **not** an authorization boundary equivalent to enterprise SSO. Remaining high-priority work: SSO/RBAC, comprehensive metrics exporters/alerts, reconciliation after missed events, load testing, independent model-review evaluations, and live GHES 3.19 integration.

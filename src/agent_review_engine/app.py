@@ -31,6 +31,7 @@ class RepoSettingsPatch(BaseModel):
     jev_enabled: bool | None = None
     auto_enqueue: bool | None = None
     approval_mode: str | None = Field(default=None, pattern="^(report_only|approve)$")
+    llm_profile: str | None = Field(default=None, max_length=48)
 
 
 class BridgeGroup(BaseModel):
@@ -146,6 +147,22 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
                               [spec], 0)
         return {"accepted": count}
 
+    @app.get("/admin/metrics")
+    async def metrics(request: Request, days: int = 30):
+        admin_authorize(request)
+        if days not in (1, 7, 30, 90):
+            raise HTTPException(422, "days must be one of 1, 7, 30, 90")
+        return store.metrics(days)
+
+    @app.get("/admin/audit")
+    async def audit(request: Request, repository: str = "", limit: int = 50):
+        admin_authorize(request)
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be between 1 and 200")
+        if repository and not allowed(repository):
+            raise HTTPException(403, "Repository is invalid or not enrolled")
+        return {"events": store.audit(repository or None, limit)}
+
     @app.get("/admin/summary")
     async def summary(request: Request):
         admin_authorize(request)
@@ -168,7 +185,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
                                     else overrides["jev_enabled"]),
                     "approval_mode": overrides["approval_mode"] or settings.approval_mode,
                     "auto_enqueue": (settings.auto_enqueue if overrides["auto_enqueue"] is None
-                                     else overrides["auto_enqueue"])}}
+                                     else overrides["auto_enqueue"]),
+                    "llm_profile": overrides["llm_profile"] or "default"}}
 
     @app.patch("/admin/repos/{owner}/{repo}")
     async def update_repo_settings(owner: str, repo: str, update: RepoSettingsPatch,
@@ -178,6 +196,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         changed = update.model_dump(exclude_unset=True)
         if not changed:
             raise HTTPException(400, "No settings provided")
+        if changed.get("llm_profile"):
+            try:
+                settings.resolve_llm_profile(changed["llm_profile"])
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                raise HTTPException(422, "Unknown or invalid LLM profile") from exc
         updated = store.update_repo_settings(name, changed)
         return {"repository": name, "overrides": updated,
                 "note": "Applies to future events. Use /admin/recheck for existing PRs."}

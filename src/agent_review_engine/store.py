@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from .models import JobSpec, utcnow
 
@@ -41,7 +42,20 @@ class RepoSetting(Base):
     jev_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     approval_mode: Mapped[str | None] = mapped_column(String(24), nullable=True)
     auto_enqueue: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    llm_profile: Mapped[str | None] = mapped_column(String(48), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("ix_audit_repo_time", "repository", "created_at"),)
+    fingerprint: Mapped[str] = mapped_column(String(500), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    repository: Mapped[str] = mapped_column(String(250), nullable=False)
+    subject: Mapped[str] = mapped_column(String(400), nullable=False)
+    sha: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    details: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Store:
@@ -107,6 +121,19 @@ class Store:
             row.status, row.state, row.error = status, json.dumps(state), error[:1000]
             row.leased_until = None
             row.updated_at = utcnow()
+            if row.kind in ("pr", "queue"):
+                fingerprint = f"job:{key}:{generation}"
+                if db.get(AuditEvent, fingerprint) is None:
+                    verdict = (state.get("verdict") or {}).get("verdict", "not_evaluated")
+                    evidence = {"status": status, "verdict": verdict,
+                                "risk": state.get("risk"), "llm_profile": state.get("llm_profile", "default"),
+                                "ci_summary_sha256": hashlib.sha256(
+                                    str(state.get("ci_summary", "")).encode("utf-8")).hexdigest(),
+                                "token_usage": {k: (state.get("usage") or {}).get(k, 0)
+                                                for k in ("prompt_tokens", "completion_tokens")}}
+                    db.add(AuditEvent(fingerprint=fingerprint, event_type="review_decision",
+                                      repository=row.repository, subject=key[:400], sha=row.sha,
+                                      details=json.dumps(evidence)))
 
     def requeue(self, key: str, generation: int, state: dict, delay: int, reason: str, *, count: bool = False) -> int:
         with self.session.begin() as db:
@@ -133,9 +160,9 @@ class Store:
         with self.session() as db:
             item = db.get(RepoSetting, repository.lower())
             if item is None:
-                return {"jev_enabled": None, "approval_mode": None, "auto_enqueue": None}
+                return {"jev_enabled": None, "approval_mode": None, "auto_enqueue": None, "llm_profile": None}
             return {"jev_enabled": item.jev_enabled, "approval_mode": item.approval_mode,
-                    "auto_enqueue": item.auto_enqueue}
+                    "auto_enqueue": item.auto_enqueue, "llm_profile": item.llm_profile}
 
     def update_repo_settings(self, repository: str, values: dict) -> dict:
         with self.session.begin() as db:
@@ -143,13 +170,48 @@ class Store:
             if item is None:
                 item = RepoSetting(repository=repository.lower())
                 db.add(item)
-            for key in ("jev_enabled", "approval_mode", "auto_enqueue"):
+            for key in ("jev_enabled", "approval_mode", "auto_enqueue", "llm_profile"):
                 if key in values:
                     setattr(item, key, values[key])
             item.updated_at = utcnow()
             result = {"jev_enabled": item.jev_enabled, "approval_mode": item.approval_mode,
-                      "auto_enqueue": item.auto_enqueue}
+                      "auto_enqueue": item.auto_enqueue, "llm_profile": item.llm_profile}
+            # Persist only changed setting values. Never persist model credentials here.
+            from uuid import uuid4
+            db.add(AuditEvent(fingerprint=f"policy:{uuid4().hex}", event_type="policy_updated",
+                              repository=repository.lower(), subject="repository_settings", sha="",
+                              details=json.dumps({k: values[k] for k in values})))
         return result
+
+    def audit(self, repository: str | None = None, limit: int = 50) -> list[dict]:
+        with self.session() as db:
+            stmt = select(AuditEvent).order_by(AuditEvent.created_at.desc(), AuditEvent.fingerprint.desc())
+            if repository:
+                stmt = stmt.where(AuditEvent.repository == repository.lower())
+            rows = db.execute(stmt.limit(limit)).scalars().all()
+            return [{"event_type": row.event_type, "repository": row.repository,
+                     "subject": row.subject, "sha": row.sha, "details": json.loads(row.details),
+                     "created_at": row.created_at.isoformat()} for row in rows]
+
+    def metrics(self, days: int = 30) -> dict:
+        from collections import Counter
+        cutoff = utcnow() - timedelta(days=days)
+        with self.session() as db:
+            rows = db.execute(select(Job).where(Job.updated_at >= cutoff)).scalars().all()
+            by_status = Counter(row.status for row in rows)
+            by_kind = Counter(row.kind for row in rows)
+            verdicts = Counter()
+            tokens = {"prompt_tokens": 0, "completion_tokens": 0}
+            for row in rows:
+                state = json.loads(row.state)
+                verdict = (state.get("verdict") or {}).get("verdict")
+                if verdict:
+                    verdicts[verdict] += 1
+                usage = state.get("usage") or {}
+                for key in tokens:
+                    tokens[key] += int(usage.get(key, 0) or 0)
+            return {"days": days, "jobs_total": len(rows), "status": dict(by_status),
+                    "kind": dict(by_kind), "verdicts": dict(verdicts), "tokens": tokens}
 
     def recent_jobs(self, limit: int = 30) -> list[dict]:
         with self.session() as db:
