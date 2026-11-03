@@ -9,21 +9,21 @@ permissions:
 
 jobs:
   tag:
-    if: contains(github.event.head_commit.message, 'release: MVP v0.1.0')
+    if: github.event.head_commit.message == 'fix v0.1.0 tag workflow'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Create immutable MVP tag
+      - name: Create immutable MVP tag on the released commit
         shell: bash
         run: |
           set -euo pipefail
           if git rev-parse -q --verify refs/tags/v0.1.0 >/dev/null; then
-            echo 'v0.1.0 already exists; refusing to retag'
+            echo 'v0.1.0 exists; not moving an existing tag'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a v0.1.0 "${GITHUB_SHA}" -m 'Agent Review Engine MVP v0.1.0'
+          git tag -a v0.1.0 719fc05d69ced74eca1a17e5135e0df25cdc9ae8 -m 'Agent Review Engine MVP v0.1.0'
           git push origin refs/tags/v0.1.0
