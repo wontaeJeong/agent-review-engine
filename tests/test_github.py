@@ -42,7 +42,7 @@ async def test_graphql_expected_head_oid_and_no_direct_merge():
         return httpx.Response(200, json={"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "Q1"}}}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        api = GitHubAPI(Settings(github_api_url="https://github.internal/api/v3"), client)
+        api = GitHubAPI(Settings(github_api_url="https://github.internal/api/v3", github_graphql_url="https://github.internal/api/graphql"), client)
 
         async def fake_token(iid):
             return "installation-access-token"

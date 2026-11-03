@@ -8,7 +8,7 @@ import httpx
 from .config import Settings
 from .github import GitHubAPI
 from .models import JobSpec, ReviewVerdict
-from .policy import effective_risk, fallback_labels, allowed_to_approve, requires_human
+from .policy import fallback_labels, allowed_to_approve, requires_human
 from .providers import JevClassifier, LLMReviewer
 from .store import Store
 
